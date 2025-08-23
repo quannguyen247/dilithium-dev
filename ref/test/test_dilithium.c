@@ -4,6 +4,11 @@
 #include "../randombytes.h"
 #include "../sign.h"
 
+/*
+ * MLEN    - Defines the message length (in bytes) used for testing.
+ * CTXLEN  - Defines the context length (in bytes) used for testing.
+ * NTESTS  - Specifies the number of test iterations to perform.
+ */
 #define MLEN 59
 #define CTXLEN 14
 #define NTESTS 1
@@ -46,8 +51,8 @@ int main(void)
   fprintf(fout, "\n\n");
 
 
-  // Make sig invalid to test, delete it to make valid
-  // sig[0] ^= 0xFF;
+  // // Make sig invalid to test, delete it to make valid
+  // sig[200] ^= 0xFF;
 
   // Verify
   int valid = crypto_sign_verify(sig, siglen, m, mlen, NULL, 0, pk);

@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "randombytes.h": "c",
+        "polyvec.h": "c"
+    }
+}

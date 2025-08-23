@@ -36,8 +36,8 @@ int crypto_sign_keypair(uint8_t *pk, uint8_t *sk) {
   printf("[Step 1] Seed generated. First 8 bytes: ");
   for(int i=0;i<8;i++) printf("%02x", seedbuf[i]);
   printf("...\n");
-  seedbuf[SEEDBYTES+0] = K;
-  seedbuf[SEEDBYTES+1] = L;
+  seedbuf[SEEDBYTES+0] = K;//Hai giá trị này có thể đóng vai trò như thông số bổ sung (salt, nonce,
+  seedbuf[SEEDBYTES+1] = L;//hoặc các thamsố thuậttoán) giúp tăng tính bảomật hoặc tùy biến cho q.trình tạo khóa, xác thực, hoặc mã hóa.
   shake256(seedbuf, 2*SEEDBYTES + CRHBYTES, seedbuf, SEEDBYTES+2);
   rho = seedbuf;
   rhoprime = rho + SEEDBYTES;
@@ -94,7 +94,7 @@ int crypto_sign_keypair(uint8_t *pk, uint8_t *sk) {
 }
 
 /*************************************************
-* Name:        crypto_sign_signature_internal
+* Name:        crypto_sign_signature_internal [core funtion]
 *
 * Description: Computes signature. Internal API.
 *
@@ -141,10 +141,10 @@ int crypto_sign_signature_internal(uint8_t *sig,
 
   // Step 2: Hash tr, pre, m to get mu
   printf("[Step 2] Hash tr, pre, m to get mu (SHAKE256)\n");
-  shake256_init(&state);
-  shake256_absorb(&state, tr, TRBYTES);
-  shake256_absorb(&state, pre, prelen);
-  shake256_absorb(&state, m, mlen);
+  shake256_init(&state); //state lưu trữ toàn bộ thông tin cần thiết
+  shake256_absorb(&state, tr, TRBYTES);// để thực hiện các thao tác
+  shake256_absorb(&state, pre, prelen);// băm SHAKE256, bao gồm dữ liệu đã hấp thụ,
+  shake256_absorb(&state, m, mlen);// trạng thái bộ đệm, v.v
   shake256_finalize(&state);
   shake256_squeeze(mu, CRHBYTES, &state);
 
@@ -171,9 +171,9 @@ rej:
 
   // Step 5: Compute w1 and w0 from matrix A and vector y
   printf("[Step 5] Compute w1 and w0 from matrix A and vector y\n");
-  z = y;
-  polyvecl_ntt(&z);
-  polyvec_matrix_pointwise_montgomery(&w1, mat, &z);
+  z = y;//Biến z được dùng để lưu bản sao của y
+  polyvecl_ntt(&z);//và thực hiện các phép biến đổi cần thiết (NTT) trước khi nhân với ma trận A.
+  polyvec_matrix_pointwise_montgomery(&w1, mat, &z);// Điều này đảm bảo dữ liệu gốc không bị thay đổi và phù hợp với yêu cầu thuật toán.
   polyveck_reduce(&w1);
   polyveck_invntt_tomont(&w1);
 
@@ -242,7 +242,7 @@ rej:
 }
 
 /*************************************************
-* Name:        crypto_sign_signature
+* Name:        crypto_sign_signature [Wrapper]
 *
 * Description: Computes signature.
 *
@@ -268,8 +268,8 @@ int crypto_sign_signature(uint8_t *sig,
   uint8_t pre[257];
   uint8_t rnd[RNDBYTES];
 
-  if(ctxlen > 255)
-    return -1;
+  if(ctxlen > 255)//255 là giá trị tối đa của một byte (unsigned char),
+    return -1;// thuận tiện cho việc đóng gói dữ liệu. ==>đảm bảo an toàn bộ nhớ và tuân thủ chuẩn giao thức.
 
   /* Prepare pre = (0, ctxlen, ctx) */
   pre[0] = 0;
@@ -289,7 +289,7 @@ int crypto_sign_signature(uint8_t *sig,
 }
 
 /*************************************************
-* Name:        crypto_sign
+* Name:        crypto_sign [outermost function]
 *
 * Description: Compute signed message.
 *

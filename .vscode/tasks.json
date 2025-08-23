@@ -1,0 +1,37 @@
+{
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "C/C++: gcc.exe build active file",
+            "command": "C:/msys64/ucrt64/bin/gcc.exe",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                // Danh sách các file .c của dự án
+                "test/test_dilithium.c",
+                "sign.c",
+                "polyvec.c",
+                "poly.c",
+                "packing.c",
+                "randombytes.c",
+                "rounding.c",
+                "fips202.c",
+                "-I.",
+                "-o",
+                "build/test_dilithium.exe" // Tên file output
+            ],
+            "options": {
+                "cwd": "C:/msys64/ucrt64/bin"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "compiler: C:/msys64/ucrt64/bin/gcc.exe"
+        }
+    ],
+    "version": "2.0.0"
+}
