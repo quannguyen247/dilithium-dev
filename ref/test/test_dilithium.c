@@ -32,6 +32,9 @@ int main(void)
   for (int i = 0; i < CRYPTO_SECRETKEYBYTES; i++) fprintf(fout, "%02x", sk[i]);
   fprintf(fout, "\n\n");
 
+  // Make signature sig or secret key sk invalid to test
+  // sk[0] ^= 0xFF; // sig[0] ^= 0xFF;
+
   // Signing
   uint8_t sig[CRYPTO_BYTES];
   size_t siglen = 0;
@@ -41,10 +44,6 @@ int main(void)
   fprintf(fout, "* Signature: ");
   for (size_t i = 0; i < siglen; i++) fprintf(fout, "%02x", sig[i]);
   fprintf(fout, "\n\n");
-
-
-  // Make sig invalid to test, delete it to make valid
-  // sig[0] ^= 0xFF;
 
   // Verify
   int valid = crypto_sign_verify(sig, siglen, m, mlen, NULL, 0, pk);
