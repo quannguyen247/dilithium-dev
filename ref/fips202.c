@@ -1,7 +1,43 @@
-/* Based on the public domain implementation in crypto_hash/keccakc512/simple/ from
- * http://bench.cr.yp.to/supercop.html by Ronny Van Keer and the public domain "TweetFips202"
- * implementation from https://twitter.com/tweetfips202 by Gilles Van Assche, Daniel J. Bernstein,
- * and Peter Schwabe */
+/*
+ * =================================================================================
+ * This file is a super important part of our crypto project.
+ * It implements the Keccak algorithm, which is like a super-secure blender for data.
+ * Keccak is the foundation for the modern SHA-3 hash functions and SHAKE extendable-output
+ * functions, as defined in the official U.S. government standard FIPS 202.
+ *
+ * HASH FUNCTION in general:
+ * A hash function takes any input (like a message, a file, or a number) and "hashes"
+ * it into a short, fixed-size string of characters. This output is called a "hash"
+ * or "digest". It's like a unique fingerprint for the data.
+ *    1. The output is always the same length.
+ *    2. The same input always produces the same output.
+ *    3. A tiny change in the input creates a completely different output.
+ *    4. You can't go backward from the output to figure out the input (it's a one-way street).
+ *
+ * WHAT ARE SHAKE and SHA-3?
+ * - SHA-3: This is a standard hash function. `sha3_256` gives you a 256-bit (32-byte)
+ *   fingerprint. It's used for creating a unique and secure summary of data.
+ * - SHAKE: This stands for "Secure Hash Algorithm and Keccak". It's an "eXtendable-Output
+ *   Function" (XOF). This means that unlike SHA-3, you can ask it for an output of
+ *   *any length*. If you need a lot of random-looking data generated from a single,
+ *   small seed, SHAKE is the perfect tool. In Dilithium, we use SHAKE all the time
+ *   to expand seeds into large matrices and vectors of polynomials.
+ *
+ * HOW DOES IT WORK (THE SPONGE METAPHOR)?
+ * Keccak works like a "sponge".
+ * 1. ABSORBING: You feed your input data into the sponge. The sponge "absorbs" the
+ *    data, mixing it into its internal state.
+ * 2. SQUEEZING: After you've put all your data in, you "squeeze" the sponge to get
+ *    the output hash. For SHAKE, you can keep squeezing to get as much output as you need.
+ *
+ * This file contains all the low-level functions to make this sponge work.
+ *
+ * Based on the public domain implementation in crypto_hash/keccakc512/simple/
+ * from http://bench.cr.yp.to/supercop.html by Ronny Van Keer and the public domain
+ * "TweetFips202" implementation from https://twitter.com/tweetfips202 by
+ * Gilles Van Assche, Daniel J. Bernstein, and Peter Schwabe.
+ * =================================================================================
+ */
 
 #include <stddef.h>
 #include <stdint.h>
@@ -9,11 +45,15 @@
 
 #define NROUNDS 24
 #define ROL(a, offset) ((a << offset) ^ (a >> (64-offset)))
-
+// The below pair of functions designed to convert between a 64-bit integer and its byte array
+// representation. This pair of functions ensures that the byte order is always correctly
+// arranged in little-endian format, making data exchange between different systems consistent.
 /*************************************************
 * Name:        load64
 *
-* Description: Load 8 bytes into uint64_t in little-endian order
+* Description: Load 8 bytes into a 64-bit integer (uint64_t).
+*              This function handles "endianness" by making sure the bytes
+*              are arranged in the correct order (little-endian).
 *
 * Arguments:   - const uint8_t *x: pointer to input byte array
 *
@@ -32,9 +72,10 @@ static uint64_t load64(const uint8_t x[8]) {
 /*************************************************
 * Name:        store64
 *
-* Description: Store a 64-bit integer to array of 8 bytes in little-endian order
+* Description: Store a 64-bit integer into an array of 8 bytes (little-endian).
+*              This is the reverse of `load64`.
 *
-* Arguments:   - uint8_t *x: pointer to the output byte array (allocated)
+* Arguments:   - uint8_t *x: pointer to the output byte array
 *              - uint64_t u: input 64-bit unsigned integer
 **************************************************/
 static void store64(uint8_t x[8], uint64_t u) {
@@ -44,7 +85,10 @@ static void store64(uint8_t x[8], uint64_t u) {
     x[i] = u >> 8*i;
 }
 
-/* Keccak round constants */
+/* These are the "round constants" for Keccak. They are special, predefined
+ * numbers that are mixed into the state during each round of permutation.
+ * They are essential for the security of the algorithm because they break
+ * up symmetries that might otherwise create weaknesses. */
 const uint64_t KeccakF_RoundConstants[NROUNDS] = {
   (uint64_t)0x0000000000000001ULL,
   (uint64_t)0x0000000000008082ULL,
@@ -75,7 +119,27 @@ const uint64_t KeccakF_RoundConstants[NROUNDS] = {
 /*************************************************
 * Name:        KeccakF1600_StatePermute
 *
-* Description: The Keccak F1600 Permutation
+* Description: This is the heart of the Keccak algorithm. It's the "blender"
+*              function that scrambles the internal state. It takes the 1600-bit
+*              state (25x 64-bit words) and mixes it up thoroughly over 24 rounds.
+*              Each round involves a series of bitwise operations (XOR, AND, NOT,
+*              and rotations) that are designed to be fast on computers and provide
+*              strong cryptographic security.
+*
+*              The 5 steps of each round are:
+*              - θ (theta): A linear mixing step that provides diffusion.
+*              - ρ (rho):   Bitwise rotation to further spread changes.
+*              - π (pi):    Permutes the positions of the words.
+*              - χ (chi):   The main non-linear step, providing confusion.
+*              - ι (iota):  Adds a round-specific constant to break symmetry.
+*               (It's a bitwise XOR operation that breaks symmetry)
+*               (--> prevents the algorithm from having fixed points or repetitive
+*                    cycles that could be exploited by attackers --> ensures every round
+*                    is distinct, making the process much harder to reverse)
+*
+*              This implementation is highly optimized: it unrolls the loop to
+*              process two rounds at a time and uses local variables to encourage
+*              the compiler to use CPU registers.
 *
 * Arguments:   - uint64_t *state: pointer to input/output Keccak state
 **************************************************/
@@ -83,20 +147,26 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
 {
         int round;
 
+        // These local variables represent the 5x5 state matrix of Keccak.
+        // The naming convention corresponds to the matrix coordinates, e.g.,
+        // Aba = A[0,0], Abe = A[1,0], Aga = A[0,1], etc.
+        // Using local variables helps the compiler optimize by keeping them in registers.
         uint64_t Aba, Abe, Abi, Abo, Abu;
         uint64_t Aga, Age, Agi, Ago, Agu;
         uint64_t Aka, Ake, Aki, Ako, Aku;
         uint64_t Ama, Ame, Ami, Amo, Amu;
         uint64_t Asa, Ase, Asi, Aso, Asu;
+        // Intermediate variables for calculations
         uint64_t BCa, BCe, BCi, BCo, BCu;
         uint64_t Da, De, Di, Do, Du;
+        // Temporary state variables for the second round in the unrolled loop
         uint64_t Eba, Ebe, Ebi, Ebo, Ebu;
         uint64_t Ega, Ege, Egi, Ego, Egu;
         uint64_t Eka, Eke, Eki, Eko, Eku;
         uint64_t Ema, Eme, Emi, Emo, Emu;
         uint64_t Esa, Ese, Esi, Eso, Esu;
 
-        //copyFromState(A, state)
+        // Copy the input state array into local variables (the 'A' state matrix).
         Aba = state[ 0];
         Abe = state[ 1];
         Abi = state[ 2];
@@ -123,15 +193,19 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
         Aso = state[23];
         Asu = state[24];
 
+        // The loop is unrolled to process two rounds at a time (round and round+1).
+        // Unrolled loop = rewriting a loop as repeated statements to run faster
         for(round = 0; round < NROUNDS; round += 2) {
-            //    prepareTheta
+            // --- ROUND (round) ---
+
+            // θ (Theta) step - Part 1: Compute column parities
             BCa = Aba^Aga^Aka^Ama^Asa;
             BCe = Abe^Age^Ake^Ame^Ase;
             BCi = Abi^Agi^Aki^Ami^Asi;
             BCo = Abo^Ago^Ako^Amo^Aso;
             BCu = Abu^Agu^Aku^Amu^Asu;
 
-            //thetaRhoPiChiIotaPrepareTheta(round, A, E)
+            // θ (Theta) step - Part 2: Compute mixing values (D) and apply to state A
             Da = BCu^ROL(BCe, 1);
             De = BCa^ROL(BCi, 1);
             Di = BCe^ROL(BCo, 1);
@@ -139,15 +213,42 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Du = BCo^ROL(BCa, 1);
 
             Aba ^= Da;
-            BCa = Aba;
             Age ^= De;
-            BCe = ROL(Age, 44);
             Aki ^= Di;
-            BCi = ROL(Aki, 43);
             Amo ^= Do;
-            BCo = ROL(Amo, 21);
             Asu ^= Du;
+            Abo ^= Do;
+            Agu ^= Du;
+            Aka ^= Da;
+            Ame ^= De;
+            Asi ^= Di;
+            Abe ^= De;
+            Agi ^= Di;
+            Ako ^= Do;
+            Amu ^= Du;
+            Asa ^= Da;
+            Abu ^= Du;
+            Aga ^= Da;
+            Ake ^= De;
+            Ami ^= Di;
+            Aso ^= Do;
+            Abi ^= Di;
+            Ago ^= Do;
+            Aku ^= Du;
+            Ama ^= Da;
+            Ase ^= De;
+
+            // ρ (Rho) and π (Pi) steps are combined and interleaved.
+            // The results are then used in the χ (Chi) step.
+            // The ROL (rotate left) is the ρ step.
+            // The rearrangement of variables (e.g., from Age to BCe) is the π step.
+            BCa = Aba;
+            BCe = ROL(Age, 44);
+            BCi = ROL(Aki, 43);
+            BCo = ROL(Amo, 21);
             BCu = ROL(Asu, 14);
+            // χ (Chi) step: The main non-linear operation. Result stored in E.
+            // ι (Iota) step: XOR with round constant.
             Eba =   BCa ^((~BCe)&  BCi );
             Eba ^= (uint64_t)KeccakF_RoundConstants[round];
             Ebe =   BCe ^((~BCi)&  BCo );
@@ -155,15 +256,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Ebo =   BCo ^((~BCu)&  BCa );
             Ebu =   BCu ^((~BCa)&  BCe );
 
-            Abo ^= Do;
             BCa = ROL(Abo, 28);
-            Agu ^= Du;
             BCe = ROL(Agu, 20);
-            Aka ^= Da;
             BCi = ROL(Aka,  3);
-            Ame ^= De;
             BCo = ROL(Ame, 45);
-            Asi ^= Di;
             BCu = ROL(Asi, 61);
             Ega =   BCa ^((~BCe)&  BCi );
             Ege =   BCe ^((~BCi)&  BCo );
@@ -171,15 +267,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Ego =   BCo ^((~BCu)&  BCa );
             Egu =   BCu ^((~BCa)&  BCe );
 
-            Abe ^= De;
             BCa = ROL(Abe,  1);
-            Agi ^= Di;
             BCe = ROL(Agi,  6);
-            Ako ^= Do;
             BCi = ROL(Ako, 25);
-            Amu ^= Du;
             BCo = ROL(Amu,  8);
-            Asa ^= Da;
             BCu = ROL(Asa, 18);
             Eka =   BCa ^((~BCe)&  BCi );
             Eke =   BCe ^((~BCi)&  BCo );
@@ -187,15 +278,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Eko =   BCo ^((~BCu)&  BCa );
             Eku =   BCu ^((~BCa)&  BCe );
 
-            Abu ^= Du;
             BCa = ROL(Abu, 27);
-            Aga ^= Da;
             BCe = ROL(Aga, 36);
-            Ake ^= De;
             BCi = ROL(Ake, 10);
-            Ami ^= Di;
             BCo = ROL(Ami, 15);
-            Aso ^= Do;
             BCu = ROL(Aso, 56);
             Ema =   BCa ^((~BCe)&  BCi );
             Eme =   BCe ^((~BCi)&  BCo );
@@ -203,15 +289,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Emo =   BCo ^((~BCu)&  BCa );
             Emu =   BCu ^((~BCa)&  BCe );
 
-            Abi ^= Di;
             BCa = ROL(Abi, 62);
-            Ago ^= Do;
             BCe = ROL(Ago, 55);
-            Aku ^= Du;
             BCi = ROL(Aku, 39);
-            Ama ^= Da;
             BCo = ROL(Ama, 41);
-            Ase ^= De;
             BCu = ROL(Ase,  2);
             Esa =   BCa ^((~BCe)&  BCi );
             Ese =   BCe ^((~BCi)&  BCo );
@@ -219,14 +300,17 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Eso =   BCo ^((~BCu)&  BCa );
             Esu =   BCu ^((~BCa)&  BCe );
 
-            //    prepareTheta
+            // --- ROUND (round+1) ---
+            // The same steps are repeated, but this time the input is the 'E' matrix
+            // from the previous round, and the output is the 'A' matrix.
+
+            // θ (Theta) step
             BCa = Eba^Ega^Eka^Ema^Esa;
             BCe = Ebe^Ege^Eke^Eme^Ese;
             BCi = Ebi^Egi^Eki^Emi^Esi;
             BCo = Ebo^Ego^Eko^Emo^Eso;
             BCu = Ebu^Egu^Eku^Emu^Esu;
 
-            //thetaRhoPiChiIotaPrepareTheta(round+1, E, A)
             Da = BCu^ROL(BCe, 1);
             De = BCa^ROL(BCi, 1);
             Di = BCe^ROL(BCo, 1);
@@ -234,14 +318,36 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Du = BCo^ROL(BCa, 1);
 
             Eba ^= Da;
-            BCa = Eba;
             Ege ^= De;
-            BCe = ROL(Ege, 44);
             Eki ^= Di;
-            BCi = ROL(Eki, 43);
             Emo ^= Do;
-            BCo = ROL(Emo, 21);
             Esu ^= Du;
+            Ebo ^= Do;
+            Egu ^= Du;
+            Eka ^= Da;
+            Eme ^= De;
+            Esi ^= Di;
+            Ebe ^= De;
+            Egi ^= Di;
+            Eko ^= Do;
+            Emu ^= Du;
+            Esa ^= Da;
+            Ebu ^= Du;
+            Ega ^= Da;
+            Eke ^= De;
+            Emi ^= Di;
+            Eso ^= Do;
+            Ebi ^= Di;
+            Ego ^= Do;
+            Eku ^= Du;
+            Ema ^= Da;
+            Ese ^= De;
+
+            // ρ (Rho), π (Pi), χ (Chi), and ι (Iota) steps
+            BCa = Eba;
+            BCe = ROL(Ege, 44);
+            BCi = ROL(Eki, 43);
+            BCo = ROL(Emo, 21);
             BCu = ROL(Esu, 14);
             Aba =   BCa ^((~BCe)&  BCi );
             Aba ^= (uint64_t)KeccakF_RoundConstants[round+1];
@@ -250,15 +356,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Abo =   BCo ^((~BCu)&  BCa );
             Abu =   BCu ^((~BCa)&  BCe );
 
-            Ebo ^= Do;
             BCa = ROL(Ebo, 28);
-            Egu ^= Du;
             BCe = ROL(Egu, 20);
-            Eka ^= Da;
             BCi = ROL(Eka, 3);
-            Eme ^= De;
             BCo = ROL(Eme, 45);
-            Esi ^= Di;
             BCu = ROL(Esi, 61);
             Aga =   BCa ^((~BCe)&  BCi );
             Age =   BCe ^((~BCi)&  BCo );
@@ -266,15 +367,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Ago =   BCo ^((~BCu)&  BCa );
             Agu =   BCu ^((~BCa)&  BCe );
 
-            Ebe ^= De;
             BCa = ROL(Ebe, 1);
-            Egi ^= Di;
             BCe = ROL(Egi, 6);
-            Eko ^= Do;
             BCi = ROL(Eko, 25);
-            Emu ^= Du;
             BCo = ROL(Emu, 8);
-            Esa ^= Da;
             BCu = ROL(Esa, 18);
             Aka =   BCa ^((~BCe)&  BCi );
             Ake =   BCe ^((~BCi)&  BCo );
@@ -282,15 +378,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Ako =   BCo ^((~BCu)&  BCa );
             Aku =   BCu ^((~BCa)&  BCe );
 
-            Ebu ^= Du;
             BCa = ROL(Ebu, 27);
-            Ega ^= Da;
             BCe = ROL(Ega, 36);
-            Eke ^= De;
             BCi = ROL(Eke, 10);
-            Emi ^= Di;
             BCo = ROL(Emi, 15);
-            Eso ^= Do;
             BCu = ROL(Eso, 56);
             Ama =   BCa ^((~BCe)&  BCi );
             Ame =   BCe ^((~BCi)&  BCo );
@@ -298,15 +389,10 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Amo =   BCo ^((~BCu)&  BCa );
             Amu =   BCu ^((~BCa)&  BCe );
 
-            Ebi ^= Di;
             BCa = ROL(Ebi, 62);
-            Ego ^= Do;
             BCe = ROL(Ego, 55);
-            Eku ^= Du;
             BCi = ROL(Eku, 39);
-            Ema ^= Da;
             BCo = ROL(Ema, 41);
-            Ese ^= De;
             BCu = ROL(Ese, 2);
             Asa =   BCa ^((~BCe)&  BCi );
             Ase =   BCe ^((~BCi)&  BCo );
@@ -315,7 +401,7 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
             Asu =   BCu ^((~BCa)&  BCe );
         }
 
-        //copyToState(state, A)
+        // Copy the final local state variables back to the state array.
         state[ 0] = Aba;
         state[ 1] = Abe;
         state[ 2] = Abi;
@@ -346,7 +432,8 @@ static void KeccakF1600_StatePermute(uint64_t state[25])
 /*************************************************
 * Name:        keccak_init
 *
-* Description: Initializes the Keccak state.
+* Description: Initializes the Keccak state by setting it all to zeros.
+*              This is the first step before you start absorbing data.
 *
 * Arguments:   - uint64_t *s: pointer to Keccak state
 **************************************************/
@@ -360,15 +447,17 @@ static void keccak_init(uint64_t s[25])
 /*************************************************
 * Name:        keccak_absorb
 *
-* Description: Absorb step of Keccak; incremental.
+* Description: The "absorbing" part of the sponge. It takes input data and
+*              XORs it into the Keccak state. If the state gets full, it
+*              calls the `KeccakF1600_StatePermute` function to scramble
+*              everything before absorbing more data.
 *
 * Arguments:   - uint64_t *s: pointer to Keccak state
-*              - unsigned int pos: position in current block to be absorbed
-*              - unsigned int r: rate in bytes (e.g., 168 for SHAKE128)
-*              - const uint8_t *in: pointer to input to be absorbed into s
+*              - unsigned int r: the "rate" in bytes (how much data to absorb per block)
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 *
-* Returns new position pos in current block
+* Returns new position in the current block.
 **************************************************/
 static unsigned int keccak_absorb(uint64_t s[25],
                                   unsigned int pos,
@@ -395,12 +484,17 @@ static unsigned int keccak_absorb(uint64_t s[25],
 /*************************************************
 * Name:        keccak_finalize
 *
-* Description: Finalize absorb step.
+* Description: Finishes the absorbing phase. It adds special "padding" to the
+*              last block of data. This padding is crucial for security and
+*              ensures that messages of different lengths produce different hashes.
+*              The byte `p` is for "domain separation", which means we use
+*              different values of `p` for SHAKE vs. SHA-3 to make sure their
+*              outputs are independent.
 *
 * Arguments:   - uint64_t *s: pointer to Keccak state
-*              - unsigned int pos: position in current block to be absorbed
-*              - unsigned int r: rate in bytes (e.g., 168 for SHAKE128)
-*              - uint8_t p: domain separation byte
+*              - unsigned int pos: current position in the block
+*              - unsigned int r: the rate in bytes
+*              - uint8_t p: the domain separation byte
 **************************************************/
 static void keccak_finalize(uint64_t s[25], unsigned int pos, unsigned int r, uint8_t p)
 {
@@ -411,17 +505,19 @@ static void keccak_finalize(uint64_t s[25], unsigned int pos, unsigned int r, ui
 /*************************************************
 * Name:        keccak_squeeze
 *
-* Description: Squeeze step of Keccak. Squeezes arbitratrily many bytes.
-*              Modifies the state. Can be called multiple times to keep
-*              squeezing, i.e., is incremental.
+* Description: The "squeezing" part of the sponge. It extracts output data
+*              from the state. If you need more output than is currently in
+*              the state, it calls `KeccakF1600_StatePermute` to generate a
+*              new block of output. This can be called multiple times to get
+*              an output of any length (which is what SHAKE does).
 *
-* Arguments:   - uint8_t *out: pointer to output
-*              - size_t outlen: number of bytes to be squeezed (written to out)
-*              - uint64_t *s: pointer to input/output Keccak state
-*              - unsigned int pos: number of bytes in current block already squeezed
-*              - unsigned int r: rate in bytes (e.g., 168 for SHAKE128)
+* Arguments:   - uint8_t *out: pointer to output buffer
+*              - size_t outlen: number of bytes to squeeze
+*              - uint64_t *s: pointer to Keccak state
+*              - unsigned int pos: position in the current block
+*              - unsigned int r: the rate in bytes
 *
-* Returns new position pos in current block
+* Returns new position in the current block.
 **************************************************/
 static unsigned int keccak_squeeze(uint8_t *out,
                                    size_t outlen,
@@ -449,14 +545,15 @@ static unsigned int keccak_squeeze(uint8_t *out,
 /*************************************************
 * Name:        keccak_absorb_once
 *
-* Description: Absorb step of Keccak;
-*              non-incremental, starts by zeroeing the state.
+* Description: A helper function that does the whole absorb process in one go
+*              (initializes, absorbs all data, and finalizes). This is faster
+*              for when you have all the input data at once.
 *
-* Arguments:   - uint64_t *s: pointer to (uninitialized) output Keccak state
-*              - unsigned int r: rate in bytes (e.g., 168 for SHAKE128)
-*              - const uint8_t *in: pointer to input to be absorbed into s
+* Arguments:   - uint64_t *s: pointer to Keccak state
+*              - unsigned int r: the rate in bytes
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
-*              - uint8_t p: domain-separation byte for different Keccak-derived functions
+*              - uint8_t p: domain separation byte
 **************************************************/
 static void keccak_absorb_once(uint64_t s[25],
                                unsigned int r,
@@ -487,15 +584,13 @@ static void keccak_absorb_once(uint64_t s[25],
 /*************************************************
 * Name:        keccak_squeezeblocks
 *
-* Description: Squeeze step of Keccak. Squeezes full blocks of r bytes each.
-*              Modifies the state. Can be called multiple times to keep
-*              squeezing, i.e., is incremental. Assumes zero bytes of current
-*              block have already been squeezed.
+* Description: A faster version of `keccak_squeeze` that is optimized for when
+*              you need to squeeze many full blocks of output at once.
 *
-* Arguments:   - uint8_t *out: pointer to output blocks
-*              - size_t nblocks: number of blocks to be squeezed (written to out)
-*              - uint64_t *s: pointer to input/output Keccak state
-*              - unsigned int r: rate in bytes (e.g., 168 for SHAKE128)
+* Arguments:   - uint8_t *out: pointer to output buffer
+*              - size_t nblocks: number of full blocks to squeeze
+*              - uint64_t *s: pointer to Keccak state
+*              - unsigned int r: the rate in bytes
 **************************************************/
 static void keccak_squeezeblocks(uint8_t *out,
                                  size_t nblocks,
@@ -513,12 +608,22 @@ static void keccak_squeezeblocks(uint8_t *out,
   }
 }
 
+/*
+ * =================================================================================
+ * SHAKE128 Functions
+ *
+ * These functions provide an API for using SHAKE128. SHAKE128 has a security
+ * level of 128 bits and can produce an output of any length.
+ * The `_RATE` is 168 bytes (1344 bits).
+ * =================================================================================
+ */
+
 /*************************************************
 * Name:        shake128_init
 *
-* Description: Initilizes Keccak state for use as SHAKE128 XOF
+* Description: Initializes a SHAKE128 state.
 *
-* Arguments:   - keccak_state *state: pointer to (uninitialized) Keccak state
+* Arguments:   - keccak_state *state: pointer to Keccak state
 **************************************************/
 void shake128_init(keccak_state *state)
 {
@@ -529,10 +634,11 @@ void shake128_init(keccak_state *state)
 /*************************************************
 * Name:        shake128_absorb
 *
-* Description: Absorb step of the SHAKE128 XOF; incremental.
+* Description: Absorbs input data into the SHAKE128 state. You can call this
+*              multiple times if your data comes in chunks.
 *
-* Arguments:   - keccak_state *state: pointer to (initialized) output Keccak state
-*              - const uint8_t *in: pointer to input to be absorbed into s
+* Arguments:   - keccak_state *state: pointer to Keccak state
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void shake128_absorb(keccak_state *state, const uint8_t *in, size_t inlen)
@@ -543,7 +649,7 @@ void shake128_absorb(keccak_state *state, const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        shake128_finalize
 *
-* Description: Finalize absorb step of the SHAKE128 XOF.
+* Description: Finalizes the absorbing phase for SHAKE128.
 *
 * Arguments:   - keccak_state *state: pointer to Keccak state
 **************************************************/
@@ -556,12 +662,12 @@ void shake128_finalize(keccak_state *state)
 /*************************************************
 * Name:        shake128_squeeze
 *
-* Description: Squeeze step of SHAKE128 XOF. Squeezes arbitraily many
-*              bytes. Can be called multiple times to keep squeezing.
+* Description: Squeezes output from the SHAKE128 state. Can be called
+*              multiple times to get more output.
 *
-* Arguments:   - uint8_t *out: pointer to output blocks
-*              - size_t outlen : number of bytes to be squeezed (written to output)
-*              - keccak_state *s: pointer to input/output Keccak state
+* Arguments:   - uint8_t *out: pointer to output buffer
+*              - size_t outlen : number of bytes to squeeze
+*              - keccak_state *state: pointer to Keccak state
 **************************************************/
 void shake128_squeeze(uint8_t *out, size_t outlen, keccak_state *state)
 {
@@ -571,10 +677,10 @@ void shake128_squeeze(uint8_t *out, size_t outlen, keccak_state *state)
 /*************************************************
 * Name:        shake128_absorb_once
 *
-* Description: Initialize, absorb into and finalize SHAKE128 XOF; non-incremental.
+* Description: A helper that combines init, absorb, and finalize for SHAKE128.
 *
-* Arguments:   - keccak_state *state: pointer to (uninitialized) output Keccak state
-*              - const uint8_t *in: pointer to input to be absorbed into s
+* Arguments:   - keccak_state *state: pointer to Keccak state
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void shake128_absorb_once(keccak_state *state, const uint8_t *in, size_t inlen)
@@ -586,26 +692,33 @@ void shake128_absorb_once(keccak_state *state, const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        shake128_squeezeblocks
 *
-* Description: Squeeze step of SHAKE128 XOF. Squeezes full blocks of
-*              SHAKE128_RATE bytes each. Can be called multiple times
-*              to keep squeezing. Assumes new block has not yet been
-*              started (state->pos = SHAKE128_RATE).
+* Description: Squeezes full blocks of output from a SHAKE128 state.
 *
-* Arguments:   - uint8_t *out: pointer to output blocks
-*              - size_t nblocks: number of blocks to be squeezed (written to output)
-*              - keccak_state *s: pointer to input/output Keccak state
+* Arguments:   - uint8_t *out: pointer to output buffer
+*              - size_t nblocks: number of blocks to squeeze
+*              - keccak_state *state: pointer to Keccak state
 **************************************************/
 void shake128_squeezeblocks(uint8_t *out, size_t nblocks, keccak_state *state)
 {
   keccak_squeezeblocks(out, nblocks, state->s, SHAKE128_RATE);
 }
 
+/*
+ * =================================================================================
+ * SHAKE256 Functions
+ *
+ * These functions provide an API for using SHAKE256. SHAKE256 has a security
+ * level of 256 bits and can produce an output of any length.
+ * The `_RATE` is 136 bytes (1088 bits).
+ * =================================================================================
+ */
+
 /*************************************************
 * Name:        shake256_init
 *
-* Description: Initilizes Keccak state for use as SHAKE256 XOF
+* Description: Initializes a SHAKE256 state.
 *
-* Arguments:   - keccak_state *state: pointer to (uninitialized) Keccak state
+* Arguments:   - keccak_state *state: pointer to Keccak state
 **************************************************/
 void shake256_init(keccak_state *state)
 {
@@ -616,10 +729,10 @@ void shake256_init(keccak_state *state)
 /*************************************************
 * Name:        shake256_absorb
 *
-* Description: Absorb step of the SHAKE256 XOF; incremental.
+* Description: Absorbs input data into the SHAKE256 state.
 *
-* Arguments:   - keccak_state *state: pointer to (initialized) output Keccak state
-*              - const uint8_t *in: pointer to input to be absorbed into s
+* Arguments:   - keccak_state *state: pointer to Keccak state
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void shake256_absorb(keccak_state *state, const uint8_t *in, size_t inlen)
@@ -630,7 +743,7 @@ void shake256_absorb(keccak_state *state, const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        shake256_finalize
 *
-* Description: Finalize absorb step of the SHAKE256 XOF.
+* Description: Finalizes the absorbing phase for SHAKE256.
 *
 * Arguments:   - keccak_state *state: pointer to Keccak state
 **************************************************/
@@ -643,12 +756,11 @@ void shake256_finalize(keccak_state *state)
 /*************************************************
 * Name:        shake256_squeeze
 *
-* Description: Squeeze step of SHAKE256 XOF. Squeezes arbitraily many
-*              bytes. Can be called multiple times to keep squeezing.
+* Description: Squeezes output from the SHAKE256 state.
 *
-* Arguments:   - uint8_t *out: pointer to output blocks
-*              - size_t outlen : number of bytes to be squeezed (written to output)
-*              - keccak_state *s: pointer to input/output Keccak state
+* Arguments:   - uint8_t *out: pointer to output buffer
+*              - size_t outlen : number of bytes to squeeze
+*              - keccak_state *state: pointer to Keccak state
 **************************************************/
 void shake256_squeeze(uint8_t *out, size_t outlen, keccak_state *state)
 {
@@ -658,10 +770,10 @@ void shake256_squeeze(uint8_t *out, size_t outlen, keccak_state *state)
 /*************************************************
 * Name:        shake256_absorb_once
 *
-* Description: Initialize, absorb into and finalize SHAKE256 XOF; non-incremental.
+* Description: A helper that combines init, absorb, and finalize for SHAKE256.
 *
-* Arguments:   - keccak_state *state: pointer to (uninitialized) output Keccak state
-*              - const uint8_t *in: pointer to input to be absorbed into s
+* Arguments:   - keccak_state *state: pointer to Keccak state
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void shake256_absorb_once(keccak_state *state, const uint8_t *in, size_t inlen)
@@ -673,28 +785,34 @@ void shake256_absorb_once(keccak_state *state, const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        shake256_squeezeblocks
 *
-* Description: Squeeze step of SHAKE256 XOF. Squeezes full blocks of
-*              SHAKE256_RATE bytes each. Can be called multiple times
-*              to keep squeezing. Assumes next block has not yet been
-*              started (state->pos = SHAKE256_RATE).
+* Description: Squeezes full blocks of output from a SHAKE256 state.
 *
-* Arguments:   - uint8_t *out: pointer to output blocks
-*              - size_t nblocks: number of blocks to be squeezed (written to output)
-*              - keccak_state *s: pointer to input/output Keccak state
+* Arguments:   - uint8_t *out: pointer to output buffer
+*              - size_t nblocks: number of blocks to squeeze
+*              - keccak_state *state: pointer to Keccak state
 **************************************************/
 void shake256_squeezeblocks(uint8_t *out, size_t nblocks, keccak_state *state)
 {
   keccak_squeezeblocks(out, nblocks, state->s, SHAKE256_RATE);
 }
 
+/*
+ * =================================================================================
+ * Simple "One-Shot" API Functions
+ *
+ * These functions are for when you have all your input data at once and just
+ * want to get the hash in a single function call.
+ * =================================================================================
+ */
+
 /*************************************************
 * Name:        shake128
 *
-* Description: SHAKE128 XOF with non-incremental API
+* Description: A simple, one-shot function to compute a SHAKE128 hash.
 *
-* Arguments:   - uint8_t *out: pointer to output
+* Arguments:   - uint8_t *out: pointer to output buffer
 *              - size_t outlen: requested output length in bytes
-*              - const uint8_t *in: pointer to input
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void shake128(uint8_t *out, size_t outlen, const uint8_t *in, size_t inlen)
@@ -713,11 +831,11 @@ void shake128(uint8_t *out, size_t outlen, const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        shake256
 *
-* Description: SHAKE256 XOF with non-incremental API
+* Description: A simple, one-shot function to compute a SHAKE256 hash.
 *
-* Arguments:   - uint8_t *out: pointer to output
+* Arguments:   - uint8_t *out: pointer to output buffer
 *              - size_t outlen: requested output length in bytes
-*              - const uint8_t *in: pointer to input
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void shake256(uint8_t *out, size_t outlen, const uint8_t *in, size_t inlen)
@@ -736,10 +854,11 @@ void shake256(uint8_t *out, size_t outlen, const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        sha3_256
 *
-* Description: SHA3-256 with non-incremental API
+* Description: A simple, one-shot function to compute a SHA3-256 hash.
+*              This produces a fixed-size 32-byte output.
 *
-* Arguments:   - uint8_t *h: pointer to output (32 bytes)
-*              - const uint8_t *in: pointer to input
+* Arguments:   - uint8_t *h: pointer to output (must be 32 bytes)
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void sha3_256(uint8_t h[32], const uint8_t *in, size_t inlen)
@@ -756,10 +875,11 @@ void sha3_256(uint8_t h[32], const uint8_t *in, size_t inlen)
 /*************************************************
 * Name:        sha3_512
 *
-* Description: SHA3-512 with non-incremental API
+* Description: A simple, one-shot function to compute a SHA3-512 hash.
+*              This produces a fixed-size 64-byte output.
 *
-* Arguments:   - uint8_t *h: pointer to output (64 bytes)
-*              - const uint8_t *in: pointer to input
+* Arguments:   - uint8_t *h: pointer to output (must be 64 bytes)
+*              - const uint8_t *in: pointer to input data
 *              - size_t inlen: length of input in bytes
 **************************************************/
 void sha3_512(uint8_t h[64], const uint8_t *in, size_t inlen)
