@@ -7,3 +7,6 @@ PQCsignKAT_Dilithium5.rsp
 tvecs2
 tvecs3
 tvecs5
+QEMU_EFI.fd
+ubuntu18a.img
+ubuntu18r.img
