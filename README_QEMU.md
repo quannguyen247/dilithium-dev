@@ -15,8 +15,8 @@ qemu-system-aarch64 \
 qemu-system-riscv64 \
   -machine virt \
   -cpu max \
-  -m 4G \
-  -drive file=../ubuntuRV64.img,if=virtio,format=raw \
+  -m 1G \
+  -drive file=ubuntuRV64.img,if=virtio,format=raw \
   -netdev user,id=net0 \
   -device virtio-net-pci,netdev=net0 \
   -kernel /usr/lib/u-boot/qemu-riscv64_smode/uboot.elf \
@@ -24,4 +24,14 @@ qemu-system-riscv64 \
   -object rng-random,filename=/dev/urandom,id=rng \
   -device virtio-rng-pci,rng=rng \
   -nographic
-
+//-----------------------------------------------------------------------------------
+qemu-system-riscv64 \
+  -machine virt -m 1G \
+  -cpu max \
+  -smp 2 \
+  -nographic \
+  -bios /usr/lib/riscv64-linux-gnu/opensbi/generic/fw_jump.elf \
+  -kernel /usr/lib/u-boot/qemu-riscv64_smode/uboot.elf \
+  -netdev user,id=net0 \
+  -device virtio-net-pci,netdev=net0 \
+  -drive file=ubuntuRV64.img,if=virtio,format=raw
