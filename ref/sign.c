@@ -585,4 +585,3 @@ timing_info_t print_timing_info(void)
   printf("Total time (NIST compliance): %.6f seconds (%.2f ms)\n", g_time.all, g_time.all * 1000); */
   return g_time;
 }
-
