@@ -1,7 +1,6 @@
 CC = gcc
 CFLAGS += -Wall -Wextra -Wpedantic -Wmissing-prototypes -Wredundant-decls \
-  -Wshadow -Wvla -Wpointer-arith -O3 -fomit-frame-pointer \
-  -z noexecstack
+  -Wshadow -Wvla -Wpointer-arith -O3 -fomit-frame-pointer
 NISTFLAGS += -Wno-unused-result -O3 -fomit-frame-pointer
 SOURCES = sign.c packing.c polyvec.c poly.c ntt.c reduce.c rounding.c
 HEADERS = config.h params.h api.h sign.h packing.h polyvec.h poly.h ntt.h \
@@ -15,6 +14,9 @@ all: \
   test/test_dilithium2 \
   test/test_dilithium3 \
   test/test_dilithium5 \
+  test/test_dilithium_client2 \
+  test/test_dilithium_client3 \
+  test/test_dilithium_client5 \
   #test/test_vectors2 \
   #test/test_vectors3 \
   #test/test_vectors5
@@ -65,6 +67,21 @@ test/test_dilithium5: test/test_dilithium.c randombytes.c $(KECCAK_SOURCES) \
   $(KECCAK_HEADERS)
 	$(CC) $(CFLAGS) -DDILITHIUM_MODE=5 \
 	  -o $@ $< randombytes.c $(KECCAK_SOURCES)
+
+test/test_dilithium_client2: test/test_dilithium_client.c randombytes.c $(KECCAK_SOURCES) \
+  $(KECCAK_HEADERS)
+	$(CC) $(CFLAGS) -DDILITHIUM_MODE=2 \
+	  -o $@ $< randombytes.c $(KECCAK_SOURCES) -lws2_32
+
+test/test_dilithium_client3: test/test_dilithium_client.c randombytes.c $(KECCAK_SOURCES) \
+  $(KECCAK_HEADERS)
+	$(CC) $(CFLAGS) -DDILITHIUM_MODE=3 \
+	  -o $@ $< randombytes.c $(KECCAK_SOURCES) -lws2_32
+
+test/test_dilithium_client5: test/test_dilithium_client.c randombytes.c $(KECCAK_SOURCES) \
+  $(KECCAK_HEADERS)
+	$(CC) $(CFLAGS) -DDILITHIUM_MODE=5 \
+	  -o $@ $< randombytes.c $(KECCAK_SOURCES) -lws2_32
 
 test/test_vectors2: test/test_vectors.c $(KECCAK_SOURCES) \
   $(KECCAK_HEADERS)
@@ -128,6 +145,9 @@ clean:
 	rm -f test/test_dilithium2
 	rm -f test/test_dilithium3
 	rm -f test/test_dilithium5
+	rm -f test/test_dilithium_client2
+	rm -f test/test_dilithium_client3
+	rm -f test/test_dilithium_client5
 	rm -f test/test_vectors2
 	rm -f test/test_vectors3
 	rm -f test/test_vectors5
