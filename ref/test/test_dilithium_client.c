@@ -12,12 +12,40 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/resource.h>
 
 #include "../randombytes.h"
 #include "../sign.h"
 
 #define SERVER_PORT 5000
 #define BUFFER_SIZE 8192
+#define DEFAULT_TARGET_IP "192.168.4.85"
+#define CLIENT_SK_PATH "client_sk.bin"
+#define CLIENT_LOG_PATH "client.log"
+
+static uint64_t get_time_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static int load_file_exact(const char *path, uint8_t *buf, size_t len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return -1;
+    }
+
+    size_t n = fread(buf, 1, len, f);
+    fclose(f);
+
+    if (n != len) {
+        return -1;
+    }
+
+    return 0;
+}
 
 static int send_all(int sock, const uint8_t *buf, size_t len) {
     size_t total = 0;
@@ -88,21 +116,58 @@ static int recv_blob(int sock, uint8_t *buffer, uint32_t buffer_size, uint32_t *
     return 0;
 }
 
+static void log_result(const char *log_path,
+                       int status,
+                       uint32_t challenge_len,
+                       size_t sig_len,
+                       uint64_t elapsed_ms) {
+    struct rusage ru;
+    double user_ms = 0.0;
+    double sys_ms = 0.0;
+    long rss_kb = 0;
+
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        user_ms = (double)ru.ru_utime.tv_sec * 1000.0 + (double)ru.ru_utime.tv_usec / 1000.0;
+        sys_ms = (double)ru.ru_stime.tv_sec * 1000.0 + (double)ru.ru_stime.tv_usec / 1000.0;
+        rss_kb = ru.ru_maxrss;
+    }
+
+    FILE *f = fopen(log_path, "a");
+    if (!f) {
+        return;
+    }
+
+    fprintf(f,
+            "pid=%ld status=%s elapsed_ms=%llu cpu_user_ms=%.3f cpu_sys_ms=%.3f rss_kb=%ld challenge=%u sig=%zu\n",
+            (long)getpid(),
+            status == 0 ? "OK" : "FAIL",
+            (unsigned long long)elapsed_ms,
+            user_ms,
+            sys_ms,
+            rss_kb,
+            challenge_len,
+            sig_len);
+    fclose(f);
+}
+
 int main(int argc, char *argv[]) {
     int sock = -1;
     struct sockaddr_in server_addr;
-    uint8_t pk[CRYPTO_PUBLICKEYBYTES];
     uint8_t sk[CRYPTO_SECRETKEYBYTES];
     uint8_t challenge[BUFFER_SIZE];
     uint32_t challenge_len = 0;
     uint8_t signature[CRYPTO_BYTES];
     size_t sig_len = 0;
 
-    const char *ip = (argc > 1) ? argv[1] : "127.0.0.1";
+    const char *ip = (argc > 1) ? argv[1] : DEFAULT_TARGET_IP;
 
-    printf("[*] Generating Dilithium keys...\n");
-    if (crypto_sign_keypair(pk, sk) != 0) {
-        fprintf(stderr, "Key generation failed\n");
+    const char *log_path = getenv("CLIENT_LOG_PATH");
+    if (!log_path || *log_path == '\0') {
+        log_path = CLIENT_LOG_PATH;
+    }
+
+    if (load_file_exact(CLIENT_SK_PATH, sk, sizeof(sk)) < 0) {
+        fprintf(stderr, "Missing %s. Run test_dilithium_keygen first.\n", CLIENT_SK_PATH);
         return 1;
     }
 
@@ -128,17 +193,13 @@ int main(int argc, char *argv[]) {
     }
     printf("[+] Connected to %s\n", ip);
 
-    printf("[*] Sending public key...\n");
-    if (send_blob(sock, pk, CRYPTO_PUBLICKEYBYTES) < 0) {
-        perror("send() public key failed");
-        close(sock);
-        return 1;
-    }
+    uint64_t start_ms = get_time_ms();
 
     printf("[*] Waiting for challenge from server...\n");
     if (recv_blob(sock, challenge, BUFFER_SIZE, &challenge_len) < 0) {
         perror("recv() challenge failed");
         close(sock);
+        log_result(log_path, 1, challenge_len, 0, get_time_ms() - start_ms);
         return 1;
     }
     printf("[+] Received challenge: %u bytes\n", challenge_len);
@@ -147,12 +208,14 @@ int main(int argc, char *argv[]) {
     if (crypto_sign_signature(signature, &sig_len, challenge, (size_t)challenge_len, NULL, 0, sk) != 0) {
         fprintf(stderr, "Signature failed\n");
         close(sock);
+        log_result(log_path, 1, challenge_len, 0, get_time_ms() - start_ms);
         return 1;
     }
 
     if (sig_len > UINT32_MAX) {
         fprintf(stderr, "Signature too large: %zu bytes\n", sig_len);
         close(sock);
+        log_result(log_path, 1, challenge_len, sig_len, get_time_ms() - start_ms);
         return 1;
     }
 
@@ -160,10 +223,12 @@ int main(int argc, char *argv[]) {
     if (send_blob(sock, signature, (uint32_t)sig_len) < 0) {
         perror("send() signature failed");
         close(sock);
+        log_result(log_path, 1, challenge_len, sig_len, get_time_ms() - start_ms);
         return 1;
     }
 
     printf("[DONE] Dilithium process finished successfully.\n");
     close(sock);
+    log_result(log_path, 0, challenge_len, sig_len, get_time_ms() - start_ms);
     return 0;
 }
