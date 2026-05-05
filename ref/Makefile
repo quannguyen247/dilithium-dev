@@ -14,12 +14,6 @@ all: \
   test/test_dilithium2 \
   test/test_dilithium3 \
   test/test_dilithium5 \
-  test/test_dilithium_client2 \
-  test/test_dilithium_client3 \
-  test/test_dilithium_client5 \
-  test/test_dilithium_server2 \
-  test/test_dilithium_server3 \
-  test/test_dilithium_server5 \
   #test/test_vectors2 \
   #test/test_vectors3 \
   #test/test_vectors5
@@ -70,36 +64,6 @@ test/test_dilithium5: test/test_dilithium.c randombytes.c $(KECCAK_SOURCES) \
   $(KECCAK_HEADERS)
 	$(CC) $(CFLAGS) -DDILITHIUM_MODE=5 \
 	  -o $@ $< randombytes.c $(KECCAK_SOURCES)
-
-test/test_dilithium_client2: test/test_dilithium_client.c randombytes.c $(KECCAK_SOURCES) \
-  $(KECCAK_HEADERS)
-	$(CC) $(CFLAGS) -DDILITHIUM_MODE=2 \
-	  -o $@ $< randombytes.c $(KECCAK_SOURCES) 
-
-test/test_dilithium_client3: test/test_dilithium_client.c randombytes.c $(KECCAK_SOURCES) \
-  $(KECCAK_HEADERS)
-	$(CC) $(CFLAGS) -DDILITHIUM_MODE=3 \
-	  -o $@ $< randombytes.c $(KECCAK_SOURCES) 
-
-test/test_dilithium_client5: test/test_dilithium_client.c randombytes.c $(KECCAK_SOURCES) \
-  $(KECCAK_HEADERS)
-	$(CC) $(CFLAGS) -DDILITHIUM_MODE=5 \
-	  -o $@ $< randombytes.c $(KECCAK_SOURCES) 
-
-test/test_dilithium_server2: test/test_dilithium_server.c randombytes.c $(KECCAK_SOURCES) \
-  $(KECCAK_HEADERS)
-	$(CC) $(CFLAGS) -DDILITHIUM_MODE=2 \
-	  -o $@ $< randombytes.c $(KECCAK_SOURCES) 
-
-test/test_dilithium_server3: test/test_dilithium_server.c randombytes.c $(KECCAK_SOURCES) \
-  $(KECCAK_HEADERS)
-	$(CC) $(CFLAGS) -DDILITHIUM_MODE=3 \
-	  -o $@ $< randombytes.c $(KECCAK_SOURCES) 
-
-test/test_dilithium_server5: test/test_dilithium_server.c randombytes.c $(KECCAK_SOURCES) \
-  $(KECCAK_HEADERS)
-	$(CC) $(CFLAGS) -DDILITHIUM_MODE=5 \
-	  -o $@ $< randombytes.c $(KECCAK_SOURCES) 
 
 test/test_vectors2: test/test_vectors.c $(KECCAK_SOURCES) \
   $(KECCAK_HEADERS)
@@ -163,12 +127,6 @@ clean:
 	rm -f test/test_dilithium2
 	rm -f test/test_dilithium3
 	rm -f test/test_dilithium5
-	rm -f test/test_dilithium_client2
-	rm -f test/test_dilithium_client3
-	rm -f test/test_dilithium_client5
-	rm -f test/test_dilithium_server2
-	rm -f test/test_dilithium_server3
-	rm -f test/test_dilithium_server5
 	rm -f test/test_vectors2
 	rm -f test/test_vectors3
 	rm -f test/test_vectors5
