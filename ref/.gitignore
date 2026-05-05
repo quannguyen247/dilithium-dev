@@ -1,5 +1,6 @@
 *.so
 *.o
+test/*.log
 test/test_vectors*
 test/test_dilithium*
 test/test_speed*
