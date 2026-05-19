@@ -1,96 +1,245 @@
-# Custom Dilithium Implementation for PQC Research & Benchmarking
+# Dilithium (research fork)
 
-This repository is a fork of the official [Dilithium](https://github.com/pq-crystals/dilithium) implementation, customized by **quannguyen247** for the purpose of experimenting with, modifying, and benchmarking Post-Quantum Cryptography (PQC) algorithms.
+This repository is a fork of the upstream Dilithium implementation (pq-crystals/dilithium),
+customized for post-quantum cryptography (PQC) research and benchmarking. Dilithium is
+standardized as [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) (ML-DSA).
 
-## Purpose
-The primary goal of this fork is to provide a flexible framework for research and detailed performance analysis. Key objectives include:
-- **Algorithmic Experimentation:** Facilitating modifications to core components such as hash functions and matrix operations to study their impact on security and efficiency.
-- **Comparative Analysis:** Enabling side-by-side performance comparisons of different implementation strategies and optimizations.
-- **Performance Metrics:** Precise execution time measurement for key generation, signing, and verification.
+It contains:
 
-## Key Modifications
-Significant changes have been made to the `ref` implementation to support these goals. For a detailed list of all modifications, please refer to the [CHANGELOG.md](CHANGELOG.md) file.
+- `ref/`: portable reference C implementation
+- `avx2/`: optimized x86_64 implementation using AVX2
+- `Dilithium_KAT/`: pre-generated NIST KAT request/response files
+- `ref/test/`: TCP client/server demo + stress tool (POSIX/WSL)
 
----
+For a list of changes in this fork, see [CHANGELOG.md](CHANGELOG.md).
 
-# Dilithium
+## Table of contents
 
-[![Build Status](https://travis-ci.org/pq-crystals/dilithium.svg?branch=master)](https://travis-ci.org/pq-crystals/dilithium) [![Coverage Status](https://coveralls.io/repos/github/pq-crystals/dilithium/badge.svg?branch=master)](https://coveralls.io/github/pq-crystals/dilithium?branch=master)
+- [Reproducibility quick start](#reproducibility-quick-start)
+- [Build](#build)
+- [Correctness tests](#correctness-tests)
+- [Benchmarking (cycle counts)](#benchmarking-cycle-counts)
+- [Deterministic test vectors](#deterministic-test-vectors)
+- [NIST KAT generator (optional)](#nist-kat-generator-optional)
+- [TCP client/server demo (optional)](#tcp-clientserver-demo-optional)
+- [Coverage (optional)](#coverage-optional)
+- [License](#license)
 
-This repository contains the official reference implementation of the [Dilithium](https://www.pq-crystals.org/dilithium/) signature scheme, and an optimized implementation for x86 CPUs supporting the AVX2 instruction set. Dilithium is standardized as [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final).
+## Reproducibility quick start
 
-## Build instructions
+### Platform notes
 
-The implementations contain several test and benchmarking programs and a Makefile to facilitate compilation.
+- **Linux is recommended** for reproducible benchmarking.
+- **macOS** builds the `ref/` implementation fine in most setups.
+- **Windows**: use **WSL2** for the simplest build/run workflow (the stress tool under
+	`ref/test/` uses POSIX APIs such as `fork()`).
+- `avx2/` requires an x86_64 CPU with **AVX2**.
 
-### Prerequisites
+### Dependencies
 
-Some of the test programs require [OpenSSL](https://openssl.org). If the OpenSSL header files and/or shared libraries do not lie in one of the standard locations on your system, it is necessary to specify their location via compiler and linker flags in the environment variables `CFLAGS`, `NISTFLAGS`, and `LDFLAGS`.
+Ubuntu/Debian:
 
-For example, on macOS you can install OpenSSL via [Homebrew](https://brew.sh) by running
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential make pkg-config libssl-dev
+```
+
+Optional tools:
+
+```sh
+sudo apt-get install -y valgrind lcov
+```
+
+macOS (OpenSSL headers/libs may require flags):
+
 ```sh
 brew install openssl
+export CFLAGS="-I$(brew --prefix openssl)/include"
+export NISTFLAGS="-I$(brew --prefix openssl)/include"
+export LDFLAGS="-L$(brew --prefix openssl)/lib"
 ```
-Then, run
+
+## Build
+
+All commands below assume you are at the repository root.
+
+### Reference implementation (`ref/`)
+
+Build correctness tests:
+
 ```sh
-export CFLAGS="-I/opt/homebrew/opt/openssl@1.1/include"
-export NISTFLAGS="-I/opt/homebrew/opt/openssl@1.1/include"
-export LDFLAGS="-L/opt/homebrew/opt/openssl@1.1/lib"
+make -C ref clean
+make -C ref all
 ```
-before compilation to add the OpenSSL header and library locations to the respective search paths.
 
-### Test programs
+This produces:
 
-To compile the test programs on Linux or macOS, go to the `ref/` or `avx2/` directory and run
+- `ref/test/test_dilithium2`
+- `ref/test/test_dilithium3`
+- `ref/test/test_dilithium5`
+
+### AVX2 implementation (`avx2/`)
+
+Requires an x86_64 CPU with AVX2.
+
 ```sh
-make
+make -C avx2 clean
+make -C avx2 all
 ```
-This produces the executables
+
+This produces (among others):
+
+- `avx2/test/test_dilithium2`, `avx2/test/test_vectors2`, `avx2/test/test_speed2`
+- `avx2/test/test_dilithium3`, `avx2/test/test_vectors3`, `avx2/test/test_speed3`
+- `avx2/test/test_dilithium5`, `avx2/test/test_vectors5`, `avx2/test/test_speed5`
+
+## Correctness tests
+
+Reference:
+
 ```sh
-test/test_dilithium$ALG
-test/test_vectors$ALG
+./ref/test/test_dilithium2
+./ref/test/test_dilithium3
+./ref/test/test_dilithium5
 ```
-where `$ALG` ranges over the parameter sets 2, 3, and 5.
 
-* `test_dilithium$ALG` tests 10000 times to generate keys, sign a random message of 59 bytes and verify the produced signature. Also, the program will try to verify wrong signatures where a single random byte of a valid signature was randomly distorted. The program will abort with an error message and return -1 if there was an error. Otherwise it will output the key and signature sizes and return 0.
-* `test_vectors$ALG` performs further tests of internal functions and prints deterministically generated test vectors for several intermediate values that occur in the Dilithium algorithms. Namely, a 48 byte seed, the matrix A corresponding to the first 32 bytes of seed, a short secret vector s corresponding to the first 32 bytes of seed and nonce 0, a masking vector y corresponding to the seed and nonce 0, the high bits w1 and the low bits w0 of the vector w = Ay, the power-of-two rounding t1 of w and the corresponding low part t0, and the challenge c for the seed and w1. This program is meant to help to ensure compatibility of independent implementations.
+AVX2:
 
-### Benchmarking programs
-
-For benchmarking the implementations, we provide speed test programs for x86 CPUs that use the Time Step Counter (TSC) or the actual cycle counter provided by the Performance Measurement Counters (PMC) to measure performance. To compile the programs run
 ```sh
-make speed
+./avx2/test/test_dilithium2
+./avx2/test/test_dilithium3
+./avx2/test/test_dilithium5
 ```
-This produces the executables
+
+## Benchmarking (cycle counts)
+
+The `test_speed*` programs print median and average cycle counts (1000 iterations) using
+`RDTSC`.
+
+Reference:
+
 ```sh
-test/test_speed$ALG
+make -C ref speed
+./ref/test/test_speed2
+./ref/test/test_speed3
+./ref/test/test_speed5
 ```
-for all parameter sets `$ALG` as above. The programs report the median and average cycle counts of 10000 executions of various internal functions and the API functions for key generation, signing and verification. By default the Time Step Counter is used. If instead you want to obtain the actual cycle counts from the Performance Measurement Counters export `CFLAGS="-DUSE_RDPMC"` before compilation.
 
-Please note that the reference implementation in `ref/` is not optimized for any platform, and, since it prioritises clean code, is significantly slower than a trivially optimized but still platform-independent implementation. Hence benchmarking the reference code does not provide representative results.
+AVX2:
 
-Our Dilithium implementations are contained in the [SUPERCOP](https://bench.cr.yp.to) benchmarking framework. See [here](http://bench.cr.yp.to/results-sign.html#amd64-kizomba) for current cycle counts on an Intel KabyLake CPU.
-
-## Randomized signing
-
-By default our code implements Dilithium's hedged signing mode. To change this to the deterministic signing mode, undefine the `DILITHIUM_RANDOMIZED_SIGNING` preprocessor macro at compilation by either commenting the line
 ```sh
-#define DILITHIUM_RANDOMIZED_SIGNING
+make -C avx2 speed
+./avx2/test/test_speed2
+./avx2/test/test_speed3
+./avx2/test/test_speed5
 ```
-in config.h, or adding `-UDILITHIUM_RANDOMIZED_SIGNING` to the compiler flags in the environment variable `CFLAGS`.
 
-## Shared libraries
+Reproducibility tips:
 
-All implementations can be compiled into shared libraries by running
+- Pin the exact commit hash: `git rev-parse HEAD`
+- Record compiler versions: `gcc --version` / `clang --version`
+- Record CPU model and frequency scaling settings (e.g., `lscpu`)
+
+## Deterministic test vectors
+
+The `test_vectors*` programs generate deterministic test vectors (10000 sets). Randomness
+is derived from SHAKE128 on empty input (deterministic), and the expected SHA256 sums are
+stored in `SHA256SUMS`.
+
+Reference (note: vector binaries are **not** built by default in `ref/`):
+
 ```sh
-make shared
+make -C ref test/test_vectors2 test/test_vectors3 test/test_vectors5
+./ref/test/test_vectors2 > tvecs2
+./ref/test/test_vectors3 > tvecs3
+./ref/test/test_vectors5 > tvecs5
+sha256sum -c SHA256SUMS
 ```
-For example in the directory `ref/` of the reference implementation, this produces the libraries
+
+macOS:
+
 ```sh
-libpqcrystals_dilithium$ALG_ref.so
+shasum -a256 -c SHA256SUMS
 ```
-for all parameter sets `$ALG`, and the required symmetric crypto library
+
+## NIST KAT generator (optional)
+
+The NIST KAT generator (under `ref/nistkat/`) requires OpenSSL.
+
+```sh
+make -C ref nistkat
+./ref/nistkat/PQCgenKAT_sign2
+./ref/nistkat/PQCgenKAT_sign3
+./ref/nistkat/PQCgenKAT_sign5
 ```
-libpqcrystals_fips202_ref.so
+
+This writes `PQCsignKAT_*.req` / `PQCsignKAT_*.rsp` in the current directory.
+
+The repository also includes pre-generated KAT files under `Dilithium_KAT/`.
+
+## TCP client/server demo (optional)
+
+This fork includes a simple TCP challenge/response demo under `ref/test/`:
+
+- `test_dilithium_keygen{2,3,5}`: generate a keypair and write `client_sk.bin`,
+	`client_pk.bin`, `server_pk.bin`
+- `test_dilithium_server{2,3,5}`: listen on TCP port `5000`, send a challenge, verify the
+	signature
+- `test_dilithium_client{2,3,5}`: connect to server, sign the challenge, send the signature
+- `test_dilithium_stress{2,3,5}`: concurrent client load generator (uses `fork()`)
+
+Mode mapping:
+
+| Mode suffix | Parameter set |
+|-----------:|---------------|
+| 2 | Dilithium2 |
+| 3 | Dilithium3 |
+| 5 | Dilithium5 |
+
+Build:
+
+```sh
+make -C ref/test clean
+make -C ref/test all
 ```
-All global symbols in the libraries lie in the namespaces `pqcrystals_dilithium$ALG_ref` and `libpqcrystals_fips202_ref`. Hence it is possible to link a program against all libraries simultaneously and obtain access to all implementations for all parameter sets. The corresponding API header file is `ref/api.h`, which contains prototypes for all API functions and preprocessor defines for the key and signature lengths.
+
+Run (localhost, recommended on Linux/WSL):
+
+```sh
+make -C ref/test keygen MODE=2
+make -C ref/test run-server MODE=2
+```
+
+In a second terminal:
+
+```sh
+make -C ref/test run-client MODE=2 TARGET_IP=127.0.0.1
+```
+
+Stress tool:
+
+```sh
+make -C ref/test stress MODE=2 TARGET_IP=127.0.0.1 CONCURRENT_SESSIONS=10
+```
+
+Network protocol (framed):
+
+1. server → client: `uint32_be length` + challenge bytes
+2. client → server: `uint32_be length` + signature bytes
+
+Logs and files are written in `ref/test/` (e.g., `client.log`, `server.log`, and `*.bin`).
+The client log path can be overridden via `CLIENT_LOG_PATH`.
+
+## Coverage (optional)
+
+Generate an lcov report for the `ref/` implementation:
+
+```sh
+./runlcov.sh
+```
+
+## License
+
+See [LICENSE](LICENSE). This repository is available under CC0 (public domain dedication),
+Apache 2.0, or GPL 2.0. The NIST KAT generator sources under `ref/nistkat/` are provided by
+NIST.
