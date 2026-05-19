@@ -1,8 +1,11 @@
 *.so
 *.o
+test/*.log
 test/test_vectors*
 test/test_dilithium*
 test/test_speed*
+test/test_dilithium_client*
+test/test_dilithium_server*
 test/test_mul
 test/output.txt
 nistkat/*.req
