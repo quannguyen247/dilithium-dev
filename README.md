@@ -1,11 +1,8 @@
-# Dilithium (research fork)
+# Dilithium (Research Fork)
 
-This repository is a fork of the upstream Dilithium implementation (pq-crystals/dilithium),
-customized for post-quantum cryptography (PQC) research and benchmarking. Dilithium is
-standardized as [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) (ML-DSA).
+This repository is a fork of the upstream Dilithium implementation (pq-crystals/dilithium), customized for post-quantum cryptography (PQC) research and benchmarking. Dilithium is standardized as [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) (ML-DSA).
 
 It contains:
-
 - `ref/`: portable reference C implementation
 - `avx2/`: optimized x86_64 implementation using AVX2
 - `Dilithium_KAT/`: pre-generated NIST KAT request/response files
@@ -13,27 +10,31 @@ It contains:
 
 For a list of changes in this fork, see [CHANGELOG.md](CHANGELOG.md).
 
-## Table of contents
+---
 
-- [Reproducibility quick start](#reproducibility-quick-start)
+## Table of Contents
+
+- [Reproducibility Quick Start](#reproducibility-quick-start)
 - [Build](#build)
-- [Correctness tests](#correctness-tests)
-- [Benchmarking (cycle counts)](#benchmarking-cycle-counts)
-- [Deterministic test vectors](#deterministic-test-vectors)
-- [NIST KAT generator (optional)](#nist-kat-generator-optional)
-- [TCP client/server demo (optional)](#tcp-clientserver-demo-optional)
-- [Coverage (optional)](#coverage-optional)
+- [Executable Files \& Their Functions](#executable-files--their-functions)
+- [Correctness Tests](#correctness-tests)
+- [Benchmarking (Cycle Counts)](#benchmarking-cycle-counts)
+- [Deterministic Test Vectors](#deterministic-test-vectors)
+- [NIST KAT Generator (Optional)](#nist-kat-generator-optional)
+- [TCP Client/Server Demo \& OpenVPN Network Setup](#tcp-clientserver-demo--openvpn-network-setup)
+- [Coverage (Optional)](#coverage-optional)
 - [License](#license)
 
-## Reproducibility quick start
+---
 
-### Platform notes
+## Reproducibility Quick Start
+
+### Platform Notes
 
 - **Linux is recommended** for reproducible benchmarking.
 - **macOS** builds the `ref/` implementation fine in most setups.
-- **Windows**: use **WSL2** for the simplest build/run workflow (the stress tool under
-	`ref/test/` uses POSIX APIs such as `fork()`).
-- `avx2/` requires an x86_64 CPU with **AVX2**.
+- **Windows**: Use **WSL2** for the simplest build/run workflow (the stress tool under `ref/test/` uses POSIX APIs such as `fork()`).
+- `avx2/` requires an x86_64 CPU with **AVX2** instructions.
 
 ### Dependencies
 
@@ -59,11 +60,13 @@ export NISTFLAGS="-I$(brew --prefix openssl)/include"
 export LDFLAGS="-L$(brew --prefix openssl)/lib"
 ```
 
+---
+
 ## Build
 
 All commands below assume you are at the repository root.
 
-### Reference implementation (`ref/`)
+### Reference Implementation (`ref/`)
 
 Build correctness tests:
 
@@ -73,12 +76,11 @@ make -C ref all
 ```
 
 This produces:
-
 - `ref/test/test_dilithium2`
 - `ref/test/test_dilithium3`
 - `ref/test/test_dilithium5`
 
-### AVX2 implementation (`avx2/`)
+### AVX2 Implementation (`avx2/`)
 
 Requires an x86_64 CPU with AVX2.
 
@@ -87,15 +89,57 @@ make -C avx2 clean
 make -C avx2 all
 ```
 
-This produces (among others):
+This produces:
+- Correctness: `avx2/test/test_dilithium2`, `avx2/test/test_dilithium3`, `avx2/test/test_dilithium5`
+- Test vectors: `avx2/test/test_vectors2`, `avx2/test/test_vectors3`, `avx2/test/test_vectors5`
+- Speed benchmarks: `avx2/test/test_speed2`, `avx2/test/test_speed3`, `avx2/test/test_speed5`
 
-- `avx2/test/test_dilithium2`, `avx2/test/test_vectors2`, `avx2/test/test_speed2`
-- `avx2/test/test_dilithium3`, `avx2/test/test_vectors3`, `avx2/test/test_speed3`
-- `avx2/test/test_dilithium5`, `avx2/test/test_vectors5`, `avx2/test/test_speed5`
+### TCP Client/Server \& Keygen (Under `ref/test/`)
 
-## Correctness tests
+To compile the TCP challenge-response network binaries and helper tools:
 
-Reference:
+```sh
+make -C ref/test clean
+make -C ref/test all
+```
+
+This compiles all files for security modes 2, 3, and 5:
+- Key generation: `test_dilithium_keygen2`, `test_dilithium_keygen3`, `test_dilithium_keygen5`
+- TCP Server: `test_dilithium_server2`, `test_dilithium_server3`, `test_dilithium_server5`
+- TCP Client: `test_dilithium_client2`, `test_dilithium_client3`, `test_dilithium_client5`
+- Stress testing: `test_dilithium_stress2`, `test_dilithium_stress3`, `test_dilithium_stress5`
+
+---
+
+## Executable Files \& Their Functions
+
+This section guides you through the roles and functionalities of all compiled executable binaries in the project:
+
+### 1. TCP challenge-response Network Binaries (`ref/test/`)
+
+| Executable | Purpose \& Detailed Behavior |
+| :--- | :--- |
+| `test_dilithium_keygen{2,3,5}` | **Keypair Generator**: Generates Dilithium public and private key pairs for security levels 2, 3, or 5. Saves them to three binary files in the working directory:<br>- `client_sk.bin` (Client's secret key, used for signing).<br>- `client_pk.bin` (Client's public key).<br>- `server_pk.bin` (Server's public key copy, used to verify the client's signature). |
+| `test_dilithium_server{2,3,5}` | **TCP Verification Server**: Listens on TCP port `5000` (by default) for connections.<br>- On startup, it loads the public key from `server_pk.bin`.<br>- When a client connects, it loads a challenge payload from `test/input.txt` (or falls back to `input.txt` or a default string) and transmits it to the client.<br>- It waits for the client to return a signature, then verifies the signature using the loaded public key.<br>- Verification results, resource usage (CPU time, RSS memory), and timings are logged to `server.log`. |
+| `test_dilithium_client{2,3,5}` | **TCP Signing Client**: Connects to the server's IP address on port `5000`. By default, it connects to `192.168.4.85`. <br>- On startup, it loads the private key from `client_sk.bin`.<br>- Receives the challenge payload from the server.<br>- Signs the challenge payload using Dilithium signature APIs (`crypto_sign`).<br>- Transmits the signature back to the server and logs network details to `client.log`. |
+| `test_dilithium_stress{2,3,5}` | **Load \& Stress Testing Tool**: Spawns multiple concurrent client sessions using POSIX `fork()` to query the server simultaneously. By default, it connects to `192.168.4.85` with 10 concurrent sessions.<br>- Tests server concurrency, stability under load, and monitors memory/CPU overhead.<br>- Configurable via environment variables: `TARGET_IP`, `CONCURRENT_SESSIONS` (number of processes), `BATCHES` (number of runs), and `BATCH_DELAY_SEC` (delay between batches). |
+
+### 2. Local Algorithm Testing Binaries
+
+| Executable | Location | Description |
+| :--- | :--- | :--- |
+| `test_dilithium{2,3,5}` | `ref/test/` or `avx2/test/` | **Correctness Test**: Verifies the basic logic of the Dilithium algorithm locally (Keygen -> Sign -> Open/Verify) in memory. It serves as a sanity check to verify compilation without requiring a network. |
+| `test_speed{2,3,5}` | `ref/test/` or `avx2/test/` | **Speed Benchmarking**: Executes key operations (Keygen, Sign, Verify) in a loop (1000 iterations) and prints average and median CPU cycle counts utilizing `RDTSC`. |
+| `test_vectors{2,3,5}` | `ref/test/` or `avx2/test/` | **Deterministic Vector Generator**: Produces 10,000 sets of deterministic test vectors utilizing SHAKE128 as a pseudo-random seed generator. Outputs are matched against `SHA256SUMS` to verify compliance with specification standards. |
+| `test_mul` | `ref/test/` or `avx2/test/` | **Polynomial Multiplication Benchmark**: Measures performance and correctness of NTT (Number Theoretic Transform) polynomial operations. |
+
+---
+
+## Correctness Tests
+
+Verify implementation correctness locally:
+
+Reference (`ref`):
 
 ```sh
 ./ref/test/test_dilithium2
@@ -111,10 +155,11 @@ AVX2:
 ./avx2/test/test_dilithium5
 ```
 
-## Benchmarking (cycle counts)
+---
 
-The `test_speed*` programs print median and average cycle counts (1000 iterations) using
-`RDTSC`.
+## Benchmarking (Cycle Counts)
+
+The `test_speed*` programs print median and average CPU cycle counts (1000 iterations) using `RDTSC`.
 
 Reference:
 
@@ -134,37 +179,30 @@ make -C avx2 speed
 ./avx2/test/test_speed5
 ```
 
-Reproducibility tips:
+---
 
-- Pin the exact commit hash: `git rev-parse HEAD`
-- Record compiler versions: `gcc --version` / `clang --version`
-- Record CPU model and frequency scaling settings (e.g., `lscpu`)
+## Deterministic Test Vectors
 
-## Deterministic test vectors
-
-The `test_vectors*` programs generate deterministic test vectors (10000 sets). Randomness
-is derived from SHAKE128 on empty input (deterministic), and the expected SHA256 sums are
-stored in `SHA256SUMS`.
-
-Reference (note: vector binaries are **not** built by default in `ref/`):
+Generate deterministic vectors to verify against known SHA256 checksums:
 
 ```sh
+# Compile vectors (not built by default in ref)
 make -C ref test/test_vectors2 test/test_vectors3 test/test_vectors5
+
+# Generate and verify checksums
 ./ref/test/test_vectors2 > tvecs2
 ./ref/test/test_vectors3 > tvecs3
 ./ref/test/test_vectors5 > tvecs5
 sha256sum -c SHA256SUMS
 ```
 
-macOS:
+*(On macOS, replace `sha256sum -c` with `shasum -a256 -c`)*.
 
-```sh
-shasum -a256 -c SHA256SUMS
-```
+---
 
-## NIST KAT generator (optional)
+## NIST KAT Generator (Optional)
 
-The NIST KAT generator (under `ref/nistkat/`) requires OpenSSL.
+Requires OpenSSL:
 
 ```sh
 make -C ref nistkat
@@ -174,72 +212,157 @@ make -C ref nistkat
 ```
 
 This writes `PQCsignKAT_*.req` / `PQCsignKAT_*.rsp` in the current directory.
+Pre-generated KAT files are also stored under `Dilithium_KAT/`.
 
-The repository also includes pre-generated KAT files under `Dilithium_KAT/`.
+---
 
-## TCP client/server demo (optional)
+## TCP Client/Server Demo \& OpenVPN Network Setup
 
-This fork includes a simple TCP challenge/response demo under `ref/test/`:
+This guide walks you through setting up, connecting, and running a remote challenge-response session between a **Node Server** and a **Node Client** on different networks using **OpenVPN** to bridge the connection securely.
 
-- `test_dilithium_keygen{2,3,5}`: generate a keypair and write `client_sk.bin`,
-	`client_pk.bin`, `server_pk.bin`
-- `test_dilithium_server{2,3,5}`: listen on TCP port `5000`, send a challenge, verify the
-	signature
-- `test_dilithium_client{2,3,5}`: connect to server, sign the challenge, send the signature
-- `test_dilithium_stress{2,3,5}`: concurrent client load generator (uses `fork()`)
+### Network Topology
 
-Mode mapping:
+```mermaid
+graph LR
+    subgraph "Node Client (Client Node)"
+        ClientApp["test_dilithium_client"]
+        OVPN_Client["OpenVPN Client (IP: 10.8.0.2 / 192.168.4.86)"]
+    end
+    
+    subgraph "Internet / VPN Tunnel"
+        Tunnel["Encrypted Tunnel (tun0)"]
+    end
 
-| Mode suffix | Parameter set |
-|-----------:|---------------|
-| 2 | Dilithium2 |
-| 3 | Dilithium3 |
-| 5 | Dilithium5 |
+    subgraph "Node Server (Server Node)"
+        OVPN_Server["OpenVPN Server (IP: 192.168.4.85)"]
+        ServerApp["test_dilithium_server"]
+    end
 
-Build:
+    ClientApp -->|Signs challenge \& sends to port 5000| OVPN_Client
+    OVPN_Client <==> Tunnel <==> OVPN_Server
+    OVPN_Server -->|Listens on port 5000| ServerApp
+```
+
+### Step 1: Set Up OpenVPN Between the Nodes
+
+If the nodes reside on different networks or behind strict NAT firewalls, use OpenVPN to map them into a shared Virtual Private Network (VPN). To use the default server IP of the codebase:
+
+1. **On the Server Node (hosting the Server App)**:
+   - Install and configure an OpenVPN server.
+   - Configure OpenVPN to use IP routing (**TUN** mode).
+   - Configure your OpenVPN server or local routing so the Server Node's virtual VPN interface gets assigned the IP **`192.168.4.85`** (the codebase's default target IP).
+   - Ensure the server firewall allows incoming connections on port `5000` (for the TCP demo) and port `1194` (for OpenVPN).
+   - Export a client configuration profile (e.g., `client1.ovpn`).
+
+2. **On the Client Node (hosting the Client App)**:
+   - Install the OpenVPN client package (`openvpn` or OpenVPN Connect).
+   - Copy the `client1.ovpn` file from the Server Node onto the Client Node.
+   - Establish the VPN tunnel:
+     ```sh
+     sudo openvpn --config client1.ovpn
+     ```
+
+3. **Verify Connectivity**:
+   - Check that you can ping the Server Node from the Client Node: `ping 192.168.4.85`.
+
+---
+
+### Step 2: Build Network Binaries on Both Nodes
+
+On both the Server and Client nodes, compile the network binaries under the test directory:
 
 ```sh
+# Clean and compile client, server, stress, and keygen binaries
 make -C ref/test clean
 make -C ref/test all
 ```
 
-Run (localhost, recommended on Linux/WSL):
+---
 
+### Step 3: Run Keypair Generator and Copy Public Key
+
+To establish trust between the client and server, a keypair must be generated first.
+
+On the **Client Node**, run the keygen binary (e.g., for Dilithium2):
 ```sh
-make -C ref/test keygen MODE=2
-make -C ref/test run-server MODE=2
+cd ref/test
+./test_dilithium_keygen2
+```
+*Note: No parameters are required.* This generates:
+- `client_sk.bin` (Client Secret Key - remains on Client Node)
+- `client_pk.bin` (Client Public Key - remains on Client Node)
+- `server_pk.bin` (Server Verification Public Key - **must be copied to Server Node**)
+
+Copy `server_pk.bin` from the Client Node to the `ref/test/` directory on the **Server Node** (e.g., via `scp` over the VPN link):
+```sh
+scp server_pk.bin user@192.168.4.85:/path/to/dilithium-dev/ref/test/
 ```
 
-In a second terminal:
+---
+
+### Step 4: Run Server, Client, and Stress Test (No Parameters Needed)
+
+Once the keys are in place and the Server Node is accessible at `192.168.4.85`, you can run the server, client, and stress test directly without specifying any IP parameters since `192.168.4.85` is the built-in default destination.
+
+1. **On the Server Node**:
+   ```sh
+   cd ref/test
+   ./test_dilithium_server2
+   ```
+   *Note: No parameters are required.* The server will automatically load `server_pk.bin` and listen on port `5000`.
+
+2. **On the Client Node (Single Request)**:
+   ```sh
+   cd ref/test
+   ./test_dilithium_client2
+   ```
+   *Note: No parameters are required.* The client automatically connects to the server at `192.168.4.85:5000`, receives the challenge, signs it, sends the signature back, and exits.
+
+3. **On the Client Node (Concurrent Stress Test)**:
+   ```sh
+   cd ref/test
+   ./test_dilithium_stress2
+   ```
+   *Note: No parameters are required.* By default, it spawns 10 concurrent processes targeting `192.168.4.85` and cycles indefinitely.
+
+---
+
+### Step 5: Customizing Stress Test (Optional Parameters)
+
+If you wish to override the default settings (e.g. running on a different server IP, changing the number of concurrent sessions, or setting a run limit), pass them as environment variables:
 
 ```sh
-make -C ref/test run-client MODE=2 TARGET_IP=127.0.0.1
+cd ref/test
+TARGET_IP=192.168.4.85 CONCURRENT_SESSIONS=50 BATCHES=5 BATCH_DELAY_SEC=1 ./test_dilithium_stress2
 ```
 
-Stress tool:
+- `TARGET_IP`: Overrides the target server IP.
+- `CONCURRENT_SESSIONS`: Spawns custom number of concurrent clients.
+- `BATCHES`: Total execution batches (set to a number like `5` to auto-terminate after 5 batches; `0` runs indefinitely).
+- `BATCH_DELAY_SEC`: Delay in seconds between batches.
 
-```sh
-make -C ref/test stress MODE=2 TARGET_IP=127.0.0.1 CONCURRENT_SESSIONS=10
-```
+---
 
-Network protocol (framed):
+## Network Protocol Details
 
-1. server → client: `uint32_be length` + challenge bytes
-2. client → server: `uint32_be length` + signature bytes
+The protocol is framed as follows:
+1. **Server → Client**: `uint32_be length` followed by the raw challenge bytes.
+2. **Client → Server**: `uint32_be length` followed by the raw signature bytes.
 
-Logs and files are written in `ref/test/` (e.g., `client.log`, `server.log`, and `*.bin`).
-The client log path can be overridden via `CLIENT_LOG_PATH`.
+All logs and generated `.bin` keys are saved under `ref/test/`. You can override the client log destination using the `CLIENT_LOG_PATH` environment variable.
 
-## Coverage (optional)
+---
 
-Generate an lcov report for the `ref/` implementation:
+## Coverage (Optional)
+
+Generate an lcov coverage report (Linux only):
 
 ```sh
 ./runlcov.sh
 ```
 
+---
+
 ## License
 
-See [LICENSE](LICENSE). This repository is available under CC0 (public domain dedication),
-Apache 2.0, or GPL 2.0. The NIST KAT generator sources under `ref/nistkat/` are provided by
-NIST.
+See [LICENSE](LICENSE). This repository is available under CC0, Apache 2.0, or GPL 2.0. The NIST KAT generator sources under `ref/nistkat/` are provided by NIST.
